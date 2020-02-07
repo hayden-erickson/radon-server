@@ -1,15 +1,17 @@
 package main
 
 import (
-	"encoding/json"
-	"flag"
+	"os"
 	"log"
+	"fmt"
+	"strings"
 	"net/http"
-
+	"encoding/json"
 	"github.com/gorilla/websocket"
+
+	"github.com/hayden-erickson/radon/server/transform"
 )
 
-var addr = flag.String("addr", "localhost:8080", "http service address")
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
@@ -17,7 +19,10 @@ var upgrader = websocket.Upgrader{
 			return false
 		}
 
-		if r.Header["Origin"][0] == "http://localhost:3000" {
+		origin := r.Header["Origin"][0]
+
+		if origin == "http://localhost:3000" ||
+			strings.Contains(origin , "hayden-erickson.github.io") {
 			return true
 		}
 
@@ -27,11 +32,11 @@ var upgrader = websocket.Upgrader{
 
 type UploadSinoRequest struct {
 	Total int `json:"total"`
-	Theta float32 `json:"theta"`
+	Theta float64 `json:"theta"`
 	SinoRow []uint8 `json:"sino_row"`
 }
 
-type UploadSinoResponse map[string]int
+type UploadSinoResponse map[string]interface{}
 
 func echo(w http.ResponseWriter, r *http.Request) {
 	c, err := upgrader.Upgrade(w, r, nil)
@@ -41,9 +46,10 @@ func echo(w http.ResponseWriter, r *http.Request) {
 	}
 	defer c.Close()
 
-	N := 0
+	sp := transform.SimpleProjection{}
 
 	for {
+
 		mt, message, err := c.ReadMessage()
 		if err != nil {
 			log.Println("read:", err)
@@ -55,28 +61,36 @@ func echo(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		N += 1
-		resp := UploadSinoResponse{ "rowsProcessed": N }
+		if sp.GetRowsProcessed() == req.Total {
+			sp.Reset()
+			continue
+		}
 
-		bytesResp, err := json.Marshal(resp)
+		sp.BackProject(req.Total, req.Theta, req.SinoRow)
+
+		// wait for all subroutines to finish before sending back the final image
+		resp, err := json.Marshal(UploadSinoResponse{ "image": sp.GetImg() })
 		if err != nil {
 			break
 		}
 
-		err = c.WriteMessage(mt, bytesResp)
-
-		if err != nil {
+		if err = c.WriteMessage(mt, resp); err != nil {
 			log.Println("write:", err)
 			break
 		}
+
+		// the processing is finished so we can clear the state and we do not
+		// need to send the progress response
 	}
 }
 
 func main() {
-	flag.Parse()
-	log.SetFlags(0)
-	http.HandleFunc("/echo", echo)
+	addr := fmt.Sprintf("localhost:%s", os.Getenv("PORT")) 
 
-	log.Fatal(http.ListenAndServe(*addr, nil))
+	http.HandleFunc("/echo", echo)
+	fmt.Printf("Listening on %s\n", addr)
+
+	log.Fatal(http.ListenAndServe(addr, nil))
+
 }
 
