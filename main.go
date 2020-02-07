@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gorilla/websocket"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -83,10 +84,16 @@ func echo(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func heartbeat(w http.ResponseWriter, r *http.Request) {
+	io.WriteString(w, "alive")
+}
+
 func main() {
-	addr := fmt.Sprintf("localhost:%s", os.Getenv("PORT"))
+	addr := fmt.Sprintf(":%s", os.Getenv("PORT"))
 
 	http.HandleFunc("/echo", echo)
+	http.HandleFunc("/", heartbeat)
+
 	fmt.Printf("Listening on %s\n", addr)
 
 	log.Fatal(http.ListenAndServe(addr, nil))
